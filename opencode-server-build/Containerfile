@@ -1,0 +1,18 @@
+FROM registry.access.redhat.com/ubi9/nodejs-22:latest AS plugin
+USER 0
+RUN git clone --depth 1 --branch v3.14.0 https://github.com/mlflow/mlflow.git /opt/mlflow-src
+COPY patch-mlflow.cjs /tmp/patch-mlflow.cjs
+RUN node /tmp/patch-mlflow.cjs
+WORKDIR /opt/mlflow-src/libs/typescript
+RUN npm ci \
+ && npm run build --workspace=@mlflow/core \
+ && npm run build --workspace=@mlflow/opencode \
+ && npm prune --omit=dev --ignore-scripts
+FROM quay.io/opendatahub/odh-opencode-rhel9:v1.18.3@sha256:532b2b83e7762d703fb50b26f54b34a73e5faf52432b92e19e3bd4531c06e9ea
+USER 0
+RUN pip3 install --no-cache-dir 'mlflow[kubernetes]==3.14.0'
+COPY --from=plugin /opt/mlflow-src/libs/typescript /opt/mlflow-ts
+COPY start.py health.py /opt/opencode-launch/
+RUN chmod -R a+rX /opt/mlflow-ts /opt/opencode-launch
+USER 1001
+ENTRYPOINT ["python3", "/opt/opencode-launch/start.py"]

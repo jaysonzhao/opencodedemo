@@ -1,0 +1,161 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opencode-service-ca
+  namespace: opencode
+  annotations:
+    service.beta.openshift.io/inject-cabundle: 'true'
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: opencode-data
+  namespace: opencode
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: gp3-csi
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opencode-server
+  namespace: opencode
+spec:
+  type: ClusterIP
+  selector:
+    app: opencode-server
+  ports:
+    - name: http
+      port: 4096
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opencode-server
+  namespace: opencode
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: opencode-server
+  template:
+    metadata:
+      labels:
+        app: opencode-server
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      serviceAccountName: opencode-server
+      automountServiceAccountToken: true
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: opencode
+          image: image-registry.openshift-image-registry.svc:5000/opencode/opencode-server@sha256:a8d0b2735425c7595cef227eba053acb91677d3ad191be1e67b46a5043402878
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 4096
+          envFrom:
+            - secretRef:
+                name: opencode-provider
+            - secretRef:
+                name: opencode-server-auth
+          env:
+            - name: HOME
+              value: /data/home
+            - name: XDG_CONFIG_HOME
+              value: /data/config
+            - name: XDG_DATA_HOME
+              value: /data/share
+            - name: XDG_STATE_HOME
+              value: /data/state
+            - name: XDG_CACHE_HOME
+              value: /data/cache
+            - name: MLFLOW_TRACKING_URI
+              value: https://mlflow.redhat-ods-applications.svc:8443/mlflow
+            - name: MLFLOW_WORKSPACE
+              value: opencode
+            - name: MLFLOW_EXPERIMENT_NAME
+              value: opencode-traces
+            - name: MLFLOW_TRACKING_AUTH
+              value: kubernetes-namespaced
+            - name: MLFLOW_TOKEN_PATH
+              value: /var/run/secrets/kubernetes.io/serviceaccount/token
+            - name: MLFLOW_TRACKING_SERVER_CERT_PATH
+              value: /etc/mlflow-ca/service-ca.crt
+            - name: NODE_EXTRA_CA_CERTS
+              value: /etc/mlflow-ca/service-ca.crt
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: '2'
+              memory: 4Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          startupProbe:
+            exec:
+              command: [python3, /opt/opencode-launch/health.py]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            exec:
+              command: [python3, /opt/opencode-launch/health.py]
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            exec:
+              command: [python3, /opt/opencode-launch/health.py]
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: ca
+              mountPath: /etc/mlflow-ca
+              readOnly: true
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: opencode-data
+        - name: ca
+          configMap:
+            name: opencode-service-ca
+            items:
+              - key: service-ca.crt
+                path: service-ca.crt
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: opencode-server-ingress
+  namespace: opencode
+spec:
+  podSelector:
+    matchLabels:
+      app: opencode-server
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {}
+        - namespaceSelector:
+            matchLabels:
+              opencode-client: 'true'
+      ports:
+        - protocol: TCP
+          port: 4096

@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: opencode-client-check
+  namespace: opencode
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    kubernetes.io/arch: amd64
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: check
+      image: image-registry.openshift-image-registry.svc:5000/opencode/opencode-server@sha256:a8d0b2735425c7595cef227eba053acb91677d3ad191be1e67b46a5043402878
+      command: [python3, /check/client.py]
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 256Mi
+      envFrom:
+        - secretRef:
+            name: opencode-server-auth
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: [ALL]
+      volumeMounts:
+        - name: check
+          mountPath: /check
+  volumes:
+    - name: check
+      configMap:
+        name: opencode-client-check

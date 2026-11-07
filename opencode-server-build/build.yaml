@@ -1,0 +1,32 @@
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: opencode-server
+  namespace: opencode
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: opencode-server
+  namespace: opencode
+spec:
+  runPolicy: Serial
+  nodeSelector:
+    kubernetes.io/arch: amd64
+  source:
+    type: Binary
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Containerfile
+  output:
+    to:
+      kind: ImageStreamTag
+      name: opencode-server:validated
+  resources:
+    requests:
+      cpu: '1'
+      memory: 2Gi
+    limits:
+      cpu: '2'
+      memory: 4Gi
